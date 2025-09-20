@@ -1,32 +1,32 @@
 # requirements.md
 
-**Product**: Thread Condenser  
-**Purpose**: Convert long chat threads into auditable briefs of decisions, risks, actions, and open questions for managers and support leaders.
+**Product**: Thread Condenser
+**Purpose**: Convert long Slack, Microsoft Teams, and Outlook threads into auditable briefs of decisions, risks, actions, and open questions for managers and support leaders.
 
 ## 1. Scope
 
-- The system shall ingest a chat thread and produce a structured brief with provenance.  
-- The system shall operate Slack‑first.  
-- The system may support other chat platforms in future versions.
+- The system shall ingest a chat thread and produce a structured brief with provenance.
+- The system shall operate Slack‑first and shall support Microsoft Teams and Outlook threads.
+- The system may support additional chat or messaging platforms in future versions.
 
 ## 2. Definitions
 
-- **Thread**: A parent message and all replies.  
+- **Thread**: A parent message and all replies within Slack, Microsoft Teams, or an Outlook email conversation.
 - **Item**: A Decision, Risk, Action, or Open Question.  
 - **Provenance**: Message IDs and quotes that support an Item.  
 - **Confidence**: A numeric score in the range [0, 1].
 
 ## 3. Actors
 
-- **Requester**: Any Slack user who invokes the command.  
-- **Reviewer**: A user who confirms or edits Items.  
+- **Requester**: Any Slack, Microsoft Teams, or Outlook user who invokes condensation.
+- **Reviewer**: A user who confirms or edits Items.
 - **Admin**: A user who manages configuration and integrations.
 
 ## 4. High‑Level Overview
 
-- The system shall expose a Slack slash command and message shortcut to trigger condensation.  
-- The system shall post an interactive card with the extracted Items for confirmation.  
-- On confirmation, the system shall sync Items to external tools and pin a compact brief to the thread.
+- The system shall expose a Slack slash command and message shortcut and a Microsoft Teams message extension to trigger condensation. Outlook users shall be able to trigger via an add‑in or actionable message.
+- The system shall post an interactive card with the extracted Items for confirmation on Slack and Teams, and an actionable email summary for Outlook.
+- On confirmation, the system shall sync Items to external tools and pin or send a compact brief to the originating thread.
 
 ## 5. Functional Requirements
 
@@ -44,17 +44,20 @@
 
 ### 5.2 Ingest
 
-1. The system shall fetch the complete thread, including edits, replies, reactions, and user directory data.  
-2. The system shall expand quoted message links and unfurl referenced in‑workspace messages.  
-3. The system shall extract text from common attachment types where Slack provides text content.  
+1. The system shall fetch the complete thread, including edits, replies, reactions, and user directory data, regardless of whether the source is Slack, Microsoft Teams, or Outlook.
+2. The system shall expand quoted message links and unfurl referenced in‑workspace or in‑tenant messages across all supported platforms.
+3. The system shall extract text from common attachment types where Slack, Microsoft Teams, or Outlook provide text content, including email bodies and inline attachments.
 4. The system shall not fetch content from private resources the app is not permitted to access.
+5. For Outlook, the system shall stitch replies using `conversationId` and `internetMessageId` ordering to reconstruct the full thread.
+6. The system shall normalize each message into a canonical identifier `{platform, native_id}` that is reused across preprocessing, extraction, provenance, and exports.
 
 ### 5.3 Preprocess
 
-1. The system shall remove join and leave notifications and bot boilerplate.  
-2. The system shall preserve code blocks and quoted text as distinct spans.  
-3. The system shall build a reply graph with parent, depth, and branches.  
+1. The system shall remove join and leave notifications and bot boilerplate.
+2. The system shall preserve code blocks and quoted text as distinct spans.
+3. The system shall build a reply graph with parent, depth, and branches for chat threads and shall linearize Outlook email chains while retaining reply metadata.
 4. The system shall normalize timestamps to ISO 8601 in UTC.
+5. The system shall normalize participant identities into a canonical user reference that records platform, native ID, and display name.
 
 ### 5.4 Segmentation
 
@@ -76,7 +79,8 @@
 4. Each Item shall include at least one message quote and at least one source message ID.  
 5. Each Item shall include a confidence score in [0, 1].  
 6. The system shall detect dates and times in natural language and shall normalize them to ISO 8601 UTC.  
-7. The system shall map user mentions to Slack user IDs using the user directory.
+7. The system shall map user mentions to canonical user references using the Slack directory, Microsoft Entra ID, or Outlook contacts as appropriate.
+8. The system shall capture sender and recipient roles for Outlook messages and shall treat To/CC recipients as potential owners or stakeholders when inferring Items.
 
 ### 5.7 Ranking and Deduplication
 
@@ -87,14 +91,15 @@
 
 ### 5.8 Owner and Due Date Inference
 
-1. The system shall infer owners using imperative targeting, self‑assignments, final responsible speaker, and a role map.  
-2. The system shall leave owner empty if inference is ambiguous and shall flag the Item for confirmation.  
+1. The system shall infer owners using imperative targeting, self‑assignments, final responsible speaker, and a role map.
+2. The system shall leave owner empty if inference is ambiguous and shall flag the Item for confirmation.
 3. The system shall infer due dates from explicit dates, “EOD” phrases, and weekday references aligned to the channel’s timezone when available.
+4. For Outlook threads, the system shall treat direct recipients as higher priority owner candidates than CC recipients unless explicit language overrides.
 
 ### 5.9 Provenance and Auditing
 
 1. Every Item shall include `supporting_msgs[]` with `{msg_id, quote}` pairs.  
-2. Every Item shall include a link to at least one source message in Slack.  
+2. Every Item shall include a link to at least one source message in the originating platform.
 3. The brief shall include a `Provenance` block with `thread_url`, `message_ids[]`, `model_version`, and `run_id`.  
 4. The system shall provide a “Why this” view that reveals high‑level scoring factors without exposing prompts.
 
@@ -110,14 +115,15 @@
 1. On confirmation, the system shall create or update tickets in Jira or Linear when configured.  
 2. The system shall write decision docs in Confluence or Notion with backlinks when configured.  
 3. The system shall add calendar holds for Items with due dates when configured.  
-4. The system shall post external links back to the Slack thread.  
+4. The system shall post external links back to the originating Slack, Microsoft Teams, or Outlook thread.
 5. The system shall not sync unconfirmed Items.
 
 ### 5.12 Incremental Updates
 
-1. The system shall watch the thread for a configurable window after the first run. Default shall be 6 hours.  
-2. The system shall re‑process only new deltas and shall update Items that are contradicted or superseded.  
+1. The system shall watch the thread for a configurable window after the first run. Default shall be 6 hours.
+2. The system shall re‑process only new deltas and shall update Items that are contradicted or superseded.
 3. The system shall maintain a `Changelog[]` with diffs between versions.
+4. The system shall rely on Slack events, Microsoft Teams change notifications, or Outlook delta tokens to detect new activity during the watch window.
 
 ### 5.13 Digest and Notifications
 
@@ -132,9 +138,29 @@
 
 ### 5.15 Administration
 
-1. Admins shall be able to configure integrations, thresholds, and retention.  
-2. Admins shall be able to define a role map that links titles to default owners for domains.  
+1. Admins shall be able to configure integrations, thresholds, and retention.
+2. Admins shall be able to define a role map that links titles to default owners for domains.
 3. Admins shall be able to enable or disable the app per channel.
+
+### 5.16 Microsoft Teams Integration
+
+1. The Microsoft Teams app shall authenticate via Microsoft Graph with the scopes `Chat.Read.All`, `ChannelMessage.Read.All`, `ChatMessage.Send`, `Team.ReadBasic.All`, `User.Read.All`, and `offline_access`.
+2. The app shall provide a message extension and message action that trigger condensation on the selected message’s thread or chat.
+3. The system shall render interactive Adaptive Cards in Teams with the same Item controls as Slack: **Confirm**, **Edit**, **Assign**, **Create ticket**, and **Snooze**.
+4. The app shall pin a condensed summary message to the originating Teams channel or chat once an Item is confirmed.
+5. The system shall subscribe to Microsoft Graph change notifications for Teams channels and chats that contain watched threads and shall process deltas during the watch window.
+6. The system shall respect Teams channel membership and shall not reveal content to users who lack access.
+7. The system shall deep link provenance references to the original Teams messages.
+
+### 5.17 Outlook Integration
+
+1. The Outlook integration shall authenticate via Microsoft Graph with the scopes `Mail.Read`, `Mail.ReadWrite`, `Mail.Send`, `offline_access`, and `User.Read.All` when required for directory lookups.
+2. The system shall expose an Outlook add‑in or actionable message button that triggers condensation on the current email conversation.
+3. The system shall retrieve the full conversation via Graph delta queries, including HTML and text bodies, inline attachments, and metadata needed for provenance.
+4. The system shall send an actionable summary email back to the conversation after confirmation, including links to the full brief and provenance quotes.
+5. The system shall respect mailbox permissions and shall store only message IDs, headers required for provenance, and approved quotes unless workspace policy allows drafts.
+6. The system shall subscribe to mailbox change notifications or poll delta tokens during the watch window to detect new replies and shall update Items accordingly.
+7. The system shall map Outlook sender and recipient addresses to canonical user references shared with Slack and Teams profiles when available.
 
 ## 6. Data Model Requirements
 
@@ -146,18 +172,20 @@ The system shall persist the following schema or an equivalent with the same con
 - `type` shall be one of `decision|risk|action|open_question`.  
 - `title` shall be non‑empty for Decisions and Actions.  
 - `summary` shall be ≤ 512 characters.  
-- `owner` may be null or a Slack user ID.  
+- `owner` may be null or a canonical user reference ID.
 - `due_date` may be null or an ISO 8601 timestamp in UTC.  
 - `likelihood` for Risks shall be one of `low|medium|high`.  
 - `impact` for Risks shall be one of `low|medium|high`.  
 - `mitigation` for Risks may be null.  
 - `status` for Actions shall be one of `proposed|confirmed|in_progress|done|blocked`.  
 - `confidence` shall be a float in [0, 1].  
-- `supporting_msgs[]` shall contain at least one element.  
-- Each `supporting_msgs[i].msg_id` shall be a Slack message TS string.  
+- `supporting_msgs[]` shall contain at least one element.
+- Each `supporting_msgs[i].msg_id` shall be a canonical message identifier composed of `{platform, native_id}`.
 - Each `supporting_msgs[i].quote` shall be ≤ 280 characters.  
-- `people_map` shall map display names to Slack user IDs.  
-- `provenance.thread_url` shall be a valid Slack URL.
+- `people_map` shall map display names to canonical user references that include `platform`, `native_id`, and `email` when available.
+- `provenance.thread_url` shall be a valid deep link to the originating Slack, Microsoft Teams, or Outlook conversation.
+- `source_platform` shall be one of `slack|msteams|outlook`.
+- `source_thread_ref` shall include the native identifiers required to reopen the original conversation (e.g., Slack thread TS, Teams chat ID, Outlook conversation ID).
 
 ### 6.2 Brief
 
@@ -169,16 +197,19 @@ The system shall persist the following schema or an equivalent with the same con
 
 ### 7.1 Auth
 
-- All HTTP APIs shall use OAuth 2.0 for Slack calls and JWT for backend endpoints.  
+- All HTTP APIs shall use OAuth 2.0 for Slack calls and JWT for backend endpoints.
 - Tokens shall be rotated automatically and stored encrypted at rest.
+- Microsoft Graph integrations shall use OAuth 2.0 with the appropriate delegated or application permissions and shall store refresh tokens encrypted with tenant-specific keys.
 
 ### 7.2 Endpoints
 
-- `POST /v1/condense` shall accept `{thread_url, options}` and shall return a brief draft.  
-- `POST /v1/items/{id}/confirm` shall mark an Item confirmed and shall trigger sync.  
-- `POST /v1/items/{id}/edit` shall update fields and shall record a changelog entry.  
-- `GET /v1/briefs/{run_id}` shall return the current brief.  
-- `GET /v1/export` shall return confirmed Items with filters.  
+- `POST /v1/condense` shall accept `{platform, thread_ref, options}` and shall return a brief draft.
+- `POST /v1/items/{id}/confirm` shall mark an Item confirmed and shall trigger sync.
+- `POST /v1/items/{id}/edit` shall update fields and shall record a changelog entry.
+- `GET /v1/briefs/{run_id}` shall return the current brief.
+- `GET /v1/export` shall return confirmed Items with filters.
+- `GET /graph/notifications` shall echo Microsoft Graph validation tokens within 10 s.
+- `POST /graph/notifications` shall accept change notifications for Teams channels, chats, and Outlook mailboxes and shall enqueue delta refresh jobs with the supplied resource data.
 - Error responses shall include a stable `error_code`, `message`, and `correlation_id`.
 
 ### 7.3 Rate Limits
@@ -187,12 +218,14 @@ The system shall persist the following schema or an equivalent with the same con
 
 ## 8. UX Requirements
 
-1. The card shall group Items by type with a count header for each group.  
-2. Each Item row shall display title, owner, due date, confidence, and two evidence quotes.  
-3. Confidence shall display as a 0–100 badge.  
-4. Buttons shall map to server actions.  
-5. The pinned brief shall be concise and shall link to the full brief view.  
+1. The card shall group Items by type with a count header for each group.
+2. Each Item row shall display title, owner, due date, confidence, and two evidence quotes.
+3. Confidence shall display as a 0–100 badge.
+4. Buttons shall map to server actions.
+5. The pinned brief shall be concise and shall link to the full brief view.
 6. The UI shall render correctly in light and dark Slack themes.
+7. The Microsoft Teams Adaptive Card shall mirror the Slack layout and controls, adapting styling to Teams themes.
+8. Outlook actionable emails shall present grouped Items with confirmation controls or deep links back to the Teams or Slack card for edits.
 
 ## 9. LLM and Prompting Requirements
 
@@ -224,7 +257,7 @@ The system shall persist the following schema or an equivalent with the same con
 - All data at rest shall be encrypted with AES‑256.  
 - All data in transit shall use TLS 1.2 or higher.  
 - Access to workspaces shall be isolated by tenant.  
-- The system shall honor Slack channel access controls for every read and write.  
+- The system shall honor Slack channel, Microsoft Teams channel, and Outlook mailbox access controls for every read and write.
 - The system shall support data deletion on request within 7 days.  
 - Secrets shall be stored in a managed secret store.  
 - Logs shall exclude message bodies and PII where feasible.  
@@ -243,9 +276,10 @@ The system shall persist the following schema or an equivalent with the same con
 
 ### 10.6 Observability
 
-- The system shall emit metrics for latency, error rate, token usage, cost, extraction precision, and confirmation rate.  
-- The system shall provide distributed tracing with correlation IDs.  
+- The system shall emit metrics for latency, error rate, token usage, cost, extraction precision, and confirmation rate.
+- The system shall provide distributed tracing with correlation IDs.
 - The system shall provide redaction in logs for user IDs and URLs where required.
+- Metrics and traces shall be sliceable by platform (Slack, Microsoft Teams, Outlook) and by connector type.
 
 ### 10.7 Retention
 
@@ -265,36 +299,41 @@ The system shall persist the following schema or an equivalent with the same con
 
 1. When two Decisions conflict, the system shall mark both with a `conflict` tag and shall require reviewer action.  
 2. The system shall down‑weight sarcasm, memes, and low‑signal content.  
-3. The system shall handle multi‑topic branches and shall not cross‑contaminate Items across unrelated branches.  
-4. The system shall handle multi‑language threads by segment.  
+3. The system shall handle multi‑topic branches and shall not cross‑contaminate Items across unrelated branches.
+4. The system shall handle multi‑language threads by segment.
 5. The system shall skip content that violates workspace DLP rules and shall log a redaction event.
+6. The system shall unwrap Outlook forwarding headers and top‑posted replies without duplicating prior content.
 
 ## 13. Failure Modes and Safeguards
 
-1. The system shall not post a brief if no Items exceed the promotion threshold. It shall post a notice with a link to a raw summary.  
-2. The system shall surface contradiction signals that lower confidence below threshold and shall demote affected Items.  
+1. The system shall not post a brief if no Items exceed the promotion threshold. It shall post a notice with a link to a raw summary.
+2. The system shall surface contradiction signals that lower confidence below threshold and shall demote affected Items.
 3. The system shall offer top three owner candidates when owner inference is ambiguous.
+4. When Microsoft Graph subscriptions fail or return stale watermarks, the system shall fall back to periodic delta polling and shall notify admins of degraded freshness.
 
 ## 14. Configuration
 
-- The promotion threshold shall be configurable per workspace.  
-- The watch window duration shall be configurable per channel.  
-- Integrations and field mappings shall be configurable per workspace.  
+- The promotion threshold shall be configurable per workspace.
+- The watch window duration shall be configurable per channel.
+- Integrations and field mappings shall be configurable per workspace.
 - Cost caps per workspace shall be configurable. Exceeding a cap shall fail fast with a clear error.
+- Platform enablement (Slack, Microsoft Teams, Outlook) shall be configurable per workspace with independent credential stores.
+- Outlook integrations shall allow admins to scope condensation to specific shared mailboxes or user mailboxes.
 
 ## 15. Rollout and Versioning
 
-- V0 shall accept exported JSON threads via CLI.  
-- V1 shall enable Slack app with `/condense`, confirmation card, and Jira or Linear sync.  
-- V2 shall enable incremental updates, nightly digests, and registry export.  
+- V0 shall accept exported JSON threads via CLI.
+- V1 shall enable Slack app with `/condense`, confirmation card, and Jira or Linear sync.
+- V1.5 shall release Microsoft Teams message extension support with Adaptive Cards and Graph change notifications.
+- V2 shall enable Outlook add‑in support, incremental updates across all platforms, nightly digests, and registry export.
 - Breaking changes to the brief schema shall bump a major version.  
 - The system shall embed `model_version` and `api_version` in every brief.
 
 ## 16. Out of Scope
 
-- The system shall not modify or delete Slack messages.  
+- The system shall not modify or delete Slack, Microsoft Teams, or Outlook messages beyond posting sanctioned summary artifacts.
 - The system shall not auto‑approve Items without human confirmation.  
-- The system shall not scrape external web content behind auth other than Slack and configured tools.
+- The system shall not scrape external web content behind auth other than Slack, Microsoft Graph, and explicitly configured tools.
 
 ## 17. Conformance
 
