@@ -1,0 +1,27 @@
+version: "3.9"
+services:
+  api:
+    build: .
+    env_file: .env
+    ports: ["8080:8080"]
+    depends_on: [db, redis]
+  worker:
+    build: .
+    command: celery -A app.workers.celery_app.celery_app worker -l INFO -Q default,webhooks,sync,digest
+    env_file: .env
+    depends_on: [db, redis]
+  beat:
+    build: .
+    command: celery -A app.workers.celery_app.celery_app beat -l INFO
+    env_file: .env
+    depends_on: [db, redis]
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: tc
+      POSTGRES_PASSWORD: tc
+      POSTGRES_DB: tc
+    ports: ["5432:5432"]
+  redis:
+    image: redis:7
+    ports: ["6379:6379"]
