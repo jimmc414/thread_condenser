@@ -49,18 +49,20 @@ class TeamsAdapter(PlatformAdapter):
         tenant_id = thread_ref.get("tenant_id", "")
         conversation_type = thread_ref.get("conversation_type", "channel")
         channel_id = thread_ref.get("channel_id") or thread_ref.get("chat_id") or ""
+        message_id = thread_ref.get("message_id", "")
         metadata = {
             "tenant_id": tenant_id,
             "team_id": thread_ref.get("team_id", ""),
             "channel_id": thread_ref.get("channel_id", ""),
             "chat_id": thread_ref.get("chat_id", ""),
             "conversation_type": conversation_type,
+            "message_id": message_id,
         }
         return ThreadContext(
             platform=self.platform,
             workspace_id=tenant_id or thread_ref.get("team_id", ""),
             channel_id=channel_id,
-            thread_id=thread_ref.get("message_id", ""),
+            thread_id=message_id,
             requester_id=requester_id,
             metadata=metadata,
         )
@@ -126,6 +128,7 @@ class TeamsAdapter(PlatformAdapter):
             "chat_id": chat_id or "",
             "tenant_id": tenant_id or "",
             "conversation_type": conversation_type,
+            "message_id": message_id or "",
         }
 
         return ThreadContext(
