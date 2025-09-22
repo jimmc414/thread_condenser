@@ -1,3 +1,6 @@
+from typing import Any, Dict, List, Optional
+from urllib.parse import unquote
+
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -17,6 +20,130 @@ class CondenseRequest(BaseModel):
 class GraphNotification(BaseModel):
     value: list[dict] = []
     validationToken: str | None = None
+
+
+_GRAPH_RESOURCE_ENTITIES = {
+    "beta",
+    "channels",
+    "chats",
+    "mailFolders",
+    "messages",
+    "me",
+    "replies",
+    "teams",
+    "users",
+    "v1.0",
+}
+
+
+def _parse_graph_resource(resource: str) -> Dict[str, List[str]]:
+    tokens = [tok for tok in resource.strip("/").split("/") if tok]
+    parsed: Dict[str, List[str]] = {}
+    idx = 0
+    while idx < len(tokens):
+        token = tokens[idx]
+        name = token
+        value = ""
+        if "(" in token and token.endswith(")"):
+            name, rest = token.split("(", 1)
+            value = rest[:-1]
+            if value.startswith("'") and value.endswith("'"):
+                value = value[1:-1]
+            idx += 1
+        else:
+            next_token = tokens[idx + 1] if idx + 1 < len(tokens) else None
+            if next_token and next_token not in _GRAPH_RESOURCE_ENTITIES:
+                value = next_token
+                idx += 2
+            else:
+                idx += 1
+        value = unquote(value)
+        parsed.setdefault(name, []).append(value)
+    return parsed
+
+
+def _base_thread_ref(resource_data: dict[str, Any]) -> dict[str, Any]:
+    thread_ref = {
+        key: value
+        for key, value in resource_data.items()
+        if key not in {"id", "conversationId", "tenantId", "tenantID"}
+    }
+    conversation_id = resource_data.get("conversationId")
+    if conversation_id:
+        thread_ref["conversation_id"] = conversation_id
+    tenant_id = resource_data.get("tenantId") or resource_data.get("tenantID")
+    if tenant_id:
+        thread_ref["tenant_id"] = tenant_id
+    return thread_ref
+
+
+def _build_teams_thread_ref(
+    resource: str, resource_data: dict[str, Any]
+) -> Optional[dict[str, Any]]:
+    parsed = _parse_graph_resource(resource)
+    thread_ref = _base_thread_ref(resource_data)
+    thread_ref["resource"] = resource
+    channel_identity = resource_data.get("channelIdentity") or {}
+    team_id = (
+        channel_identity.get("teamId")
+        or resource_data.get("teamId")
+        or (parsed.get("teams") or [None])[0]
+    )
+    channel_id = (
+        channel_identity.get("channelId")
+        or resource_data.get("channelId")
+        or (parsed.get("channels") or [None])[0]
+    )
+    chat_id = resource_data.get("chatId") or (parsed.get("chats") or [None])[0]
+    conversation_type = "chat" if chat_id else "channel"
+    if conversation_type == "chat":
+        if not chat_id:
+            chat_id = resource_data.get("conversationId")
+        if not chat_id:
+            return None
+        thread_ref["chat_id"] = chat_id
+    else:
+        if not team_id or not channel_id:
+            return None
+        thread_ref["team_id"] = team_id
+        thread_ref["channel_id"] = channel_id
+    thread_ref["conversation_type"] = conversation_type
+    message_candidates = parsed.get("messages") or []
+    event_message_id = resource_data.get("id")
+    message_id = (
+        resource_data.get("replyToId")
+        or (message_candidates[0] if message_candidates else None)
+        or event_message_id
+    )
+    if not message_id:
+        return None
+    thread_ref["message_id"] = message_id
+    if event_message_id and event_message_id != message_id:
+        thread_ref["event_message_id"] = event_message_id
+    return thread_ref
+
+
+def _build_outlook_thread_ref(
+    resource: str, resource_data: dict[str, Any]
+) -> Optional[dict[str, Any]]:
+    parsed = _parse_graph_resource(resource)
+    thread_ref = _base_thread_ref(resource_data)
+    conversation_id = thread_ref.get("conversation_id")
+    message_id = resource_data.get("id")
+    if message_id:
+        thread_ref["message_id"] = message_id
+    mailbox = (
+        resource_data.get("mailbox")
+        or resource_data.get("userId")
+        or resource_data.get("mailboxId")
+        or (parsed.get("users") or [None])[0]
+        or (parsed.get("me") or [None])[0]
+    )
+    if not mailbox or not conversation_id:
+        return None
+    thread_ref["mailbox"] = mailbox
+    thread_ref["resource"] = resource
+    return thread_ref
 
 
 @router.post("/condense")
@@ -62,10 +189,17 @@ def graph_notifications(payload: GraphNotification):
         resource_data = notification.get("resourceData", {})
         if "/messages" not in resource:
             continue
-        if "/chats/" in resource or "/teams/" in resource:
+        thread_ref: Optional[dict[str, Any]]
+        if any(
+            marker in resource
+            for marker in ("/chats/", "/teams/", "chats(", "teams(")
+        ):
             platform = "msteams"
+            thread_ref = _build_teams_thread_ref(resource, resource_data or {})
         else:
             platform = "outlook"
-        thread_ref = {**resource_data, "resource": resource}
+            thread_ref = _build_outlook_thread_ref(resource, resource_data or {})
+        if not thread_ref:
+            continue
         trigger_condense(platform, thread_ref, None)
     return {"status": "accepted"}
